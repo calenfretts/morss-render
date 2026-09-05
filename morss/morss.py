@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License along
 # with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import hashlib
 import os
 import re
 import sys
@@ -421,16 +422,56 @@ def FeedFormat(rss, options, encoding='utf-8'):
             return rss.torss(xml_declaration=(not encoding == 'unicode'), encoding=encoding)
 
 
+RENDER_CACHE_TTL = int(os.getenv('RENDER_CACHE_TTL', 300))
+
 def process(url, cache=None, options=None):
     if not options:
         options = []
 
     options = Options(options)
 
-    if cache:
-        caching.default_cache = caching.DiskCacheHandler(cache)
+    # Cache the final rendered feed in Redis.
+    # Only do this for normal RSS output; other formats/options can have
+    # different output and should continue through the normal pipeline.
+    use_render_cache = (
+        os.getenv('CACHE', '').lower() == 'redis'
+        and options.format == 'rss'
+        and not options.force
+        and not options.cache
+        and not cache
+    )
+
+    cache_key = None
+
+    if use_render_cache:
+        cache_key = 'morss-render:' + hashlib.sha256(
+            (url + repr(sorted(options.options.items()))).encode('utf-8')
+        ).hexdigest()
+
+        try:
+            cached = caching.default_cache.r.get(cache_key)
+
+            if cached is not None:
+                print('[RENDER CACHE] HIT: %s' % url, flush=True)
+                return cached.decode('utf-8')
+
+        except Exception as e:
+            print('[RENDER CACHE] GET ERROR: %s' % e, flush=True)
 
     url, rss = FeedFetch(url, options)
     rss = FeedGather(rss, url, options)
+    output = FeedFormat(rss, options, 'unicode')
 
-    return FeedFormat(rss, options, 'unicode')
+    if use_render_cache and cache_key:
+        try:
+            caching.default_cache.r.setex(
+                cache_key,
+                RENDER_CACHE_TTL,
+                output.encode('utf-8')
+            )
+            print('[RENDER CACHE] SET: %s' % url, flush=True)
+
+        except Exception as e:
+            print('[RENDER CACHE] SET ERROR: %s' % e, flush=True)
+
+    return output
