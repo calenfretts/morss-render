@@ -71,12 +71,25 @@ except ImportError:
 
 class RedisCacheHandler(BaseCache):
     def __init__(self, host='localhost', port=6379, db=0, password=None):
-        self.r = redis.Redis(host=host, port=port, db=db, password=password)
+        self.r = redis.Redis(
+            host=host,
+            port=port,
+            db=db,
+            password=password
+        )
 
     def __getitem__(self, key):
-        return self.r.get(key)
+        data = self.r.get(key)
+
+        if data is None:
+            print(f'[REDIS] MISS: {key}', flush=True)
+            raise KeyError(key)
+
+        print(f'[REDIS] HIT: {key} ({len(data)} bytes)', flush=True)
+        return data
 
     def __setitem__(self, key, data):
+        print(f'[REDIS] SET: {key} ({len(data)} bytes)', flush=True)
         self.r.set(key, data)
 
 
