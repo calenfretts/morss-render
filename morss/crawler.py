@@ -498,7 +498,12 @@ class CacheHandler(BaseHandler):
 
     def load(self, url):
         try:
-            data = pickle.loads(self.cache[url])
+            cached = self.cache[url]
+            
+            if cached is None:
+                raise KeyError(url)
+            
+            data = pickle.loads(cached)
 
         except KeyError:
             data = None
